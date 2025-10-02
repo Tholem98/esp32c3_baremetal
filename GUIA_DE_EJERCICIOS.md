@@ -1,11 +1,11 @@
 # Guía de Ejercicios - ESP32-C3 Bare-Metal
 
-Esta guía propone una progresión incremental para que los alumnos comprendan el entorno bare-metal, el hardware del ESP32-C3 y las implicaciones de cada capa de abstracción.
+Esta guía propone una progresión incremental para el entorno bare-metal, el hardware del ESP32-C3 y las implicaciones de cada capa de abstracción.
 
 ## Reglas Generales
 
 - Trabajar SIEMPRE en commits pequeños y descriptivos.
-- Mantener cada ejercicio en una rama distinta (ej: `ej1-gpio`, `ej2-delay-mcycle`).
+- Desarrollar cada ejercicio en una rama distinta (ej: `ej1-gpio`, `ej2-delay-mcycle`). Opcional pero RECOMENDABLE.
 - Documentar en un README propio (por ejercicio) lo aprendido y problemas encontrados.
 - No introducir librerías externas sin justificación.
 
@@ -60,7 +60,7 @@ static inline uint64_t mcycle(void){
 }
 ```
 
-No uses stdio; puedes (temporal) almacenar en variables globales y observar con debugger.
+No uses stdio; podés (temporal) almacenar en variables globales y observar con debugger.
 
 ## Ejercicio 3: delay_cycles()
 
@@ -140,4 +140,4 @@ Criterios:
 - Comparar footprint con versión equivalente en ESP-IDF.
 
 ---
-Fin de la guía inicial. Continúa iterando con disciplina y midiendo cada cambio.
+Fin de la guía inicial. Continuá iterando con disciplina y midiendo cada cambio.
