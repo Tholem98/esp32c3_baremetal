@@ -26,7 +26,7 @@
 #define GPIO_ENABLE_W1TS_REG   (*(volatile uint32_t*)(GPIO_BASE + 0x0024))
 
 /* Selección del pin del LED (cambiado de GPIO2 a GPIO4 para evitar pin de strapping). */
-#define LED_GPIO 4
+#define LED_GPIO 3
 #define LED_MASK (1U << LED_GPIO)
 
 /* delay(): Espera ocupada (busy-wait). Cada iteración ejecuta un NOP.
