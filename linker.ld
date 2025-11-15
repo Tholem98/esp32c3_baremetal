@@ -27,7 +27,7 @@ MEMORY
   /* Región de FLASH mapeada a la ventana ejecutable (XIP). Código y rodata permanecen aquí. */
   IROM (rx)  : ORIGIN = 0x42000000, LENGTH = 2M
   /* Región de DRAM: almacenará .data copiada, .bss y la pila (stack). */
-  DRAM (rwx) : ORIGIN = 0x3FC80000, LENGTH = 400K
+  DRAM (rwx) : ORIGIN = 0x3FC80000, LENGTH = 384K
 }
 
 /* Externally visible symbols */
