@@ -173,6 +173,29 @@
 #define UART0_TX_OUT_IDX 0x00U // Seleccion de funcion de salida
 #define UART0_RX_IN_IDX 0x00U  // Seleccion de funcion de entrada
 
+//TIMER
+#define DR_REG_TIMG_BASE(i)     (0x60082000UL + (0x1000 * (i)))
+#define DR_REG_TIMG0_BASE       DR_REG_TIMG_BASE(0) // Base del Timer Group 0
+
+#define TIMG_T0CONFIG_REG       (DR_REG_TIMG0_BASE + 0x0000)
+#define TIMG_T0_EN              BIT(31)     // Habilitar Timer
+#define TIMG_T0_DIVIDER_S       16          // Shift para el divisor de clock
+#define TIMG_T0_INCREASE        BIT(13)     // Contar hacia arriba
+#define TIMG_T0_AUTORELOAD      BIT(19)     // Deshabilitamos autoreload
+#define TIMG_T0_CLK_SRC_S        29          // Shift Clock Source
+
+#define TIMG_T0LOAD_REG         (DR_REG_TIMG0_BASE + 0x0008) // Cargar valor inicial
+#define TIMG_T0LOAD_LOW_REG     (DR_REG_TIMG0_BASE + 0x0004) // Contador bajo (32 bits)
+#define TIMG_T0LOAD_HIGH_REG    (DR_REG_TIMG0_BASE + 0x000c) // Contador alto (16 bits)
+#define TIMG_T0_UPDATE_REG      (DR_REG_TIMG0_BASE + 0x0010) // Forzar actualización de lectura
+#define TIMG_T0_LOAD_EN         BIT(31)     // Habilitar la carga
+
+#define TIMG_T0_CNT_LOW_REG     (DR_REG_TIMG0_BASE + 0x0004) // Leer contador bajo
+#define TIMG_T0_CNT_HIGH_REG    (DR_REG_TIMG0_BASE + 0x000c) // Leer contador alto
+
+// Clock fuente es APB_CLK (80 MHz)
+#define TIMG_DIVIDER_US         80U         // 80 MHz / 80 = 1 MHz (1 tick = 1 µs)
+
 static void ledc_set_duty(uint32_t duty);
 
 static void gpio_init(void) {
@@ -233,7 +256,7 @@ static void tiny_delay(void) {
     }
 }
 
-
+/**/
 static uint32_t hcsr04_measure_pulse(void) {
     uint32_t count = 0;
     uint32_t timeout = 0;
@@ -465,6 +488,44 @@ static void uart_puts(const char *s) {
     }
 }
 
+static void timer_init(void) {
+    // 1. Deshabilitar Timer y limpiar la configuración
+    REG32(TIMG_T0CONFIG_REG) &= ~TIMG_T0_EN; 
+    
+    // 2. Configurar el divisor para 1 µs por tick (80 MHz / 80 = 1 MHz)
+    uint32_t config = 0;
+    config |= (TIMG_DIVIDER_US << TIMG_T0_DIVIDER_S);
+    
+    // 3. Configurar: conteo ascendente (INCREASE), sin autoreload
+    config |= TIMG_T0_INCREASE;
+    config &= ~TIMG_T0_AUTORELOAD;
+    
+    // 4. Escribir configuración
+    REG32(TIMG_T0CONFIG_REG) = config;
+    
+    // 5. Cargar valor inicial 0 al contador (solo para asegurar)
+    REG32(TIMG_T0LOAD_REG) = 0; 
+    REG32(TIMG_T0LOAD_REG) = 0; // Se escribe dos veces para 64-bit
+    REG32(TIMG_T0LOAD_REG) = TIMG_T0_LOAD_EN;
+    
+    // 6. Habilitar el Timer
+    REG32(TIMG_T0CONFIG_REG) |= TIMG_T0_EN; 
+}
+
+static uint64_t timer_get_us(void) {
+    // 1. Forzar la actualización de los registros de lectura
+    REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN; 
+    
+    // 2. Leer los 32 bits bajos (µs)
+    uint32_t low = REG32(TIMG_T0_CNT_LOW_REG);
+    
+    // 3. Leer los 16 bits altos (los bits restantes, aunque no serán necesarios para el HC-SR04)
+    uint32_t high = REG32(TIMG_T0_CNT_HIGH_REG);
+    
+    // 4. Combinar y devolver el resultado en µs
+    return ((uint64_t)high << 32) | low;
+}
+
 int main(void) {
     // Deshabilitar watchdogs para bucle infinito didáctico
     disable_timg_wdt(TIMG0_BASE);
@@ -476,6 +537,7 @@ int main(void) {
     adc_init();    
     ledc_init();
     uart_init(); 
+    timer_init()
     uart_puts("Sistema iniciado. Esperando boton/pulso...\r\n"); // Mensaje de inicio
 
 
