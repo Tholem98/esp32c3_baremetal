@@ -112,7 +112,7 @@
 
 // HC-SR04
 #define HCSR04_TIMEOUT       40000U   // Iteraciones máx esperando
-#define HCSR04_NEAR_THRESHOLD 3000U   // Umbral "cerca" (ajustable)
+#define HCSR04_NEAR_THRESHOLD 300U   // Umbral "cerca" (ajustable)
 
 
 #define ADC_ATTEN_11DB  3U
@@ -232,6 +232,8 @@ static void tiny_delay(void) {
         __asm__ volatile("nop");
     }
 }
+
+/*
 static uint32_t hcsr04_measure_pulse(void) {
     uint32_t count = 0;
     uint32_t timeout = 0;
@@ -265,7 +267,41 @@ static uint32_t hcsr04_measure_pulse(void) {
 
     return count;
 }
+*/
 
+static uint32_t hcsr04_measure_pulse(void) {
+    uint64_t start_time = 0;
+    uint64_t end_time = 0;
+    uint32_t timeout = 0; // Usaremos el timeout para prevenir bucles infinitos
+
+    // ... (Generación del pulso TRIG y tiny_delay se mantienen igual) ...
+
+    // Esperar a que ECHO se ponga en alto (inicio pulso)
+    while (((REG32(GPIO_IN_REG) & ECHO_MASK) == 0U) && (timeout < HCSR04_TIMEOUT)) {
+        timeout++;
+    }
+    if (timeout >= HCSR04_TIMEOUT) {
+        return 0;   // no llegó pulso
+    }
+    
+    // 🔥 Capturar Tiempo de Inicio (en µs)
+    start_time = timer_get_us();
+
+    // Medir cuánto tiempo se mantiene en alto (Timer con Polling)
+    timeout = 0;
+    while ((REG32(GPIO_IN_REG) & ECHO_MASK) != 0U && (timeout < HCSR04_TIMEOUT)) {
+        timeout++; // Incrementamos el timeout para evitar hang
+    }
+    if (timeout >= HCSR04_TIMEOUT) {
+        // Pulso demasiado largo, error o fuera de rango.
+    }
+    
+    // 🔥 Capturar Tiempo de Fin (en µs)
+    end_time = timer_get_us();
+
+    // Devolver la duración del pulso en µs
+    return (uint32_t)(end_time - start_time);
+}
 
 static void adc_init(void) {
     // Clock/reset del SARADC
@@ -467,9 +503,17 @@ int main(void) {
 
         // Medir pulso del HC-SR04
         //uint32_t pulse = hcsr04_measure_pulse(); //Descomentar esta y comentar la de arriba para usar el sensor
+        // 1. 🔥 Leer ADC para obtener un desplazamiento (offset)
+        //uint16_t raw_adc = adc_sample_once(); 
 
+        // 2. Mapear el ADC (0-4095) a un rango de OFFSET (ej. de 0 a 3000 ticks)
+        // Esto permite que el umbral aumente hasta 3000 ticks más que el base.
+        //uint32_t threshold_offset = (raw_adc * 3000U / 4095U); 
 
-        // if (pulse > HCSR04_NEAR_THRESHOLD) {//><  // Si el pulso es mayor que cierto umbral → objeto "cerca"
+        // 3. Establecer el umbral dinámico usando el valor base + offset
+        //uint32_t dynamic_threshold = HCSR04_NEAR_THRESHOLD + threshold_offset;
+
+        // if (pulse > dynamic_threshold) {//><  // Si el pulso es mayor que cierto umbral → objeto "cerca"
         if (button) { //comentar esta y descomentar la de arriba para usar el sensor
             // Si el pin está ALTO → LED detiene el fade
             ledc_set_duty(duty);
