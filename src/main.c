@@ -135,6 +135,19 @@
 #error "LEDC_TIMER_DIVIDER fuera de rango para el campo de 18 bits"
 #endif
 
+
+#define DR_REG_UART_BASE(i)     (0x60000000UL + (0x1000 * (i))) // Base para UART0 (i=0) y UART1 (i=1)
+
+#define DR_REG_UART0_BASE       DR_REG_UART_BASE(0) // 0x60000000
+
+#define UART_CLK_DIV_REG(i)     (DR_REG_UART_BASE(i) + 0x0014) // Divisor de clock (baud rate)
+#define UART_FIFO_REG(i)        (DR_REG_UART_BASE(i) + 0x0000) // Registro de datos/FIFO
+
+#define UART_STATUS_REG(i)      (DR_REG_UART_BASE(i) + 0x001C) // Registro de estado (para TX)
+#define UART_TXFIFO_CNT_S       16 // Shift para contador FIFO
+#define UART_TXFIFO_CNT_M       (0x1FFU << UART_TXFIFO_CNT_S)  // Máscara
+#define UART_FIFO_SIZE          0x7FU // Tamaño del FIFO (128 bytes)
+
 static void ledc_set_duty(uint32_t duty);
 
 static void gpio_init(void) {
@@ -340,6 +353,59 @@ static void ledc_set_duty(uint32_t duty) {
     REG32(LEDC_LSCH0_CONF0_REG) |= LEDC_PARA_UP_LSCH0;
 }
 
+// Definiciones adicionales para GPIO/IO_MUX para asignar pines
+#define UART0_TX_GPIO 21U
+#define UART0_RX_GPIO 20U
+#define UART0_TX_OUT_IDX 0x00U // Seleccion de funcion de salida
+#define UART0_RX_IN_IDX 0x00U  // Seleccion de funcion de entrada
+
+// (Necesitas definir GPIO_FUNC_OUT_SEL_CFG_REG y GPIO_FUNC_IN_SEL_CFG_REG)
+// Para el pin 21 (UART0 TX):
+// #define GPIO_FUNC21_OUT_SEL_CFG_REG (DR_REG_GPIO_BASE + 0x05BC)
+// Para el pin 20 (UART0 RX):
+// #define GPIO_FUNC20_IN_SEL_CFG_REG (DR_REG_GPIO_BASE + 0x05CC)
+
+static void uart_init(void) {
+    // 1. Configurar Baud Rate (usando UART0)
+    // 115200 Baudios: Divisor 347 (0x15B en hex)
+    REG32(UART_CLK_DIV_REG(0)) = (347U << 4); // Parte entera en bits [19:4]
+
+    // 2. Configurar Pines (TX en GPIO21, RX en GPIO20)
+    // El ESP32-C3 usa los registros GPIO matrix para conectar la UART al pin.
+    // Esto es lo más complejo en baremetal, si no usas los pines por defecto
+    // mapeados por ROM. Para simplificar, asumiremos que los pines
+    // GPIO21/GPIO20 ya están mapeados a UART0 por defecto, lo cual es común.
+    
+    // Si necesitas el mapeo explícito:
+    /*
+    REG32(GPIO_FUNC21_OUT_SEL_CFG_REG) = (UART0_TX_OUT_IDX << GPIO_FUNC_OUT_SEL_S);
+    REG32(GPIO_FUNC20_IN_SEL_CFG_REG) = (UART0_RX_IN_IDX << GPIO_FUNC_IN_SEL_S);
+    REG32(IO_MUX_GPIO21_REG) &= ~(IO_MUX_MCU_SEL_MASK); // Seleccionar función GPIO matrix
+    REG32(IO_MUX_GPIO20_REG) &= ~(IO_MUX_MCU_SEL_MASK);
+    */
+
+    // 3. Habilitar y limpiar el flujo de control, etc. (Simplificado)
+    // Estos pasos son necesarios para una configuración completa,
+    // pero a menudo se omiten en ejemplos minimalistas.
+}
+
+static void uart_putc(char c) {
+    // Esperar hasta que el FIFO no esté lleno
+    while ((REG32(UART_STATUS_REG(0)) & UART_TXFIFO_CNT_M) >= (UART_FIFO_SIZE << UART_TXFIFO_CNT_S)) {
+        // Busy-wait
+        __asm__ volatile("nop");
+    }
+    
+    // Escribir el carácter al registro FIFO (dirección 0x60000000)
+    REG32(UART_FIFO_REG(0)) = (uint32_t)c;
+}
+
+static void uart_puts(const char *s) {
+    while (*s) {
+        uart_putc(*s++);
+    }
+}
+
 int main(void) {
     // Deshabilitar watchdogs para bucle infinito didáctico
     disable_timg_wdt(TIMG0_BASE);
@@ -348,8 +414,11 @@ int main(void) {
 
     // Inicializaciones básicas
     gpio_init();
-    adc_init();    // No se usa, pero no molesta
+    adc_init();    
     ledc_init();
+    uart_init(); 
+    uart_puts("Sistema iniciado. Esperando boton/pulso...\r\n"); // Mensaje de inicio
+
 
     // Bucle principal: fade in/out con PWM
     uint32_t duty = 0;
@@ -375,15 +444,17 @@ int main(void) {
         uint32_t button = (REG32(BUTTON_GPIO)& BUTTON_MASK) != 0U
 
         // Medir pulso del HC-SR04
-        //uint32_t pulse = hcsr04_measure_pulse();
+        //uint32_t pulse = hcsr04_measure_pulse(); //Descomentar esta y comentar la de arriba para usar el sensor
 
 
-        // Si el pulso es mayor que cierto umbral → objeto "cerca"
-        // (NEAR_THRESHOLD se ajusta probando)
-        // if (pulse > HCSR04_NEAR_THRESHOLD) {//><
-        if (button) { 
+        // if (pulse > HCSR04_NEAR_THRESHOLD) {//><  // Si el pulso es mayor que cierto umbral → objeto "cerca"
+        if (button) { //comentar esta y descomentar la de arriba para usar el sensor
             // Si el pin está ALTO → LED detiene el fade
             ledc_set_duty(duty);
+
+            // 🔥 NUEVO: Enviar mensaje a la consola
+            // \r\n (Carriage Return + New Line) es importante para saltos de línea
+            uart_puts("!ATENCION: Deteccion activada. LED detenido.\r\n");
             
         } else{
             ledc_set_duty(duty);
