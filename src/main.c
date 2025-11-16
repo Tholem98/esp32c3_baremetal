@@ -148,6 +148,31 @@
 #define UART_TXFIFO_CNT_M       (0x1FFU << UART_TXFIFO_CNT_S)  // Máscara
 #define UART_FIFO_SIZE          0x7FU // Tamaño del FIFO (128 bytes)
 
+#define SYSTEM_UART_CLK_EN(i)   (1U << (i))       // i=0 para UART0, i=1 para UART1
+#define SYSTEM_UART_RST(i)      (1U << (i))
+
+// Base y Máscaras
+#define GPIO_FUNC_OUT_SEL_S     0       // Shift para el selector de función de salida
+#define IO_MUX_MCU_SEL_V        1U      // Valor 1 para seleccionar GPIO matrix (no función default)
+
+// Registros de la matriz de función (para conectar UART0 a GPIOs)
+#define GPIO_FUNC21_OUT_SEL_CFG_REG (DR_REG_GPIO_BASE + 0x05BC) // Registro de salida para GPIO21
+#define GPIO_FUNC20_IN_SEL_CFG_REG  (DR_REG_GPIO_BASE + 0x05CC) // Registro de entrada para GPIO20
+
+// Índices de la señal UART0 en la matriz
+#define U0TXD_OUT_IDX                  0x00U  // Índice de la señal U0TXD
+#define U0RXD_IN_IDX                   0x00U  // Índice de la señal U0RXD (este es el default, pero lo ponemos)
+
+// Registros IO_MUX específicos para GPIO21 y GPIO20
+#define IO_MUX_GPIO21_REG       (DR_REG_IO_MUX_BASE + 0x0058)
+#define IO_MUX_GPIO20_REG       (DR_REG_IO_MUX_BASE + 0x0054)
+
+// Definiciones adicionales para GPIO/IO_MUX para asignar pines
+#define UART0_TX_GPIO 21U
+#define UART0_RX_GPIO 20U
+#define UART0_TX_OUT_IDX 0x00U // Seleccion de funcion de salida
+#define UART0_RX_IN_IDX 0x00U  // Seleccion de funcion de entrada
+
 static void ledc_set_duty(uint32_t duty);
 
 static void gpio_init(void) {
@@ -353,40 +378,37 @@ static void ledc_set_duty(uint32_t duty) {
     REG32(LEDC_LSCH0_CONF0_REG) |= LEDC_PARA_UP_LSCH0;
 }
 
-// Definiciones adicionales para GPIO/IO_MUX para asignar pines
-#define UART0_TX_GPIO 21U
-#define UART0_RX_GPIO 20U
-#define UART0_TX_OUT_IDX 0x00U // Seleccion de funcion de salida
-#define UART0_RX_IN_IDX 0x00U  // Seleccion de funcion de entrada
-
-// (Necesitas definir GPIO_FUNC_OUT_SEL_CFG_REG y GPIO_FUNC_IN_SEL_CFG_REG)
-// Para el pin 21 (UART0 TX):
-// #define GPIO_FUNC21_OUT_SEL_CFG_REG (DR_REG_GPIO_BASE + 0x05BC)
-// Para el pin 20 (UART0 RX):
-// #define GPIO_FUNC20_IN_SEL_CFG_REG (DR_REG_GPIO_BASE + 0x05CC)
-
 static void uart_init(void) {
-    // 1. Configurar Baud Rate (usando UART0)
-    // 115200 Baudios: Divisor 347 (0x15B en hex)
-    REG32(UART_CLK_DIV_REG(0)) = (347U << 4); // Parte entera en bits [19:4]
+    // --- 1. Activar Clock y Reset UART0 ---
+    REG32(SYSTEM_PERIP_CLK_EN0_REG) |= SYSTEM_UART_CLK_EN(0);
+    REG32(SYSTEM_PERIP_RST_EN0_REG) |= SYSTEM_UART_RST(0);
+    REG32(SYSTEM_PERIP_RST_EN0_REG) &= ~SYSTEM_UART_RST(0);
 
-    // 2. Configurar Pines (TX en GPIO21, RX en GPIO20)
-    // El ESP32-C3 usa los registros GPIO matrix para conectar la UART al pin.
-    // Esto es lo más complejo en baremetal, si no usas los pines por defecto
-    // mapeados por ROM. Para simplificar, asumiremos que los pines
-    // GPIO21/GPIO20 ya están mapeados a UART0 por defecto, lo cual es común.
+    // --- 2. Configurar Baud Rate (115200) ---
+    // Divisor = 40MHz / 115200 = 347.22 (usamos 347, que es 0x15B)
+    REG32(UART_CLK_DIV_REG(0)) = (347U << 4); 
+
+    // --- 3. Configurar Pines (GPIO21=TX, GPIO20=RX) ---
     
-    // Si necesitas el mapeo explícito:
-    /*
-    REG32(GPIO_FUNC21_OUT_SEL_CFG_REG) = (UART0_TX_OUT_IDX << GPIO_FUNC_OUT_SEL_S);
-    REG32(GPIO_FUNC20_IN_SEL_CFG_REG) = (UART0_RX_IN_IDX << GPIO_FUNC_IN_SEL_S);
-    REG32(IO_MUX_GPIO21_REG) &= ~(IO_MUX_MCU_SEL_MASK); // Seleccionar función GPIO matrix
-    REG32(IO_MUX_GPIO20_REG) &= ~(IO_MUX_MCU_SEL_MASK);
-    */
+    // 3a. Mapear UART0 TX a GPIO21
+    // Conectar U0TXD_OUT_IDX (0x00) al GPIO21
+    REG32(GPIO_FUNC21_OUT_SEL_CFG_REG) = (U0TXD_OUT_IDX << GPIO_FUNC_OUT_SEL_S);
+    // Habilitar la salida (OE) para GPIO21
+    REG32(GPIO_ENABLE_W1TS_REG) = BIT(UART0_TX_GPIO);
+    // Configurar IO_MUX para usar la Matriz GPIO
+    REG32(IO_MUX_GPIO21_REG) &= ~(IO_MUX_MCU_SEL_MASK); 
+    REG32(IO_MUX_GPIO21_REG) |= (IO_MUX_MCU_SEL_V << 12); 
 
-    // 3. Habilitar y limpiar el flujo de control, etc. (Simplificado)
-    // Estos pasos son necesarios para una configuración completa,
-    // pero a menudo se omiten en ejemplos minimalistas.
+    // 3b. Mapear UART0 RX a GPIO20
+    // Conectar U0RXD_IN_IDX (0x00) al GPIO20 (con el bit de habilitación de entrada)
+    REG32(GPIO_FUNC20_IN_SEL_CFG_REG) = (U0RXD_IN_IDX << GPIO_FUNC_OUT_SEL_S) | IO_MUX_FUN_IE;
+    // Deshabilitar la salida (OE) para GPIO20
+    REG32(GPIO_ENABLE_W1TC_REG) = BIT(UART0_RX_GPIO);
+    // Configurar IO_MUX para usar la Matriz GPIO
+    REG32(IO_MUX_GPIO20_REG) &= ~(IO_MUX_MCU_SEL_MASK);
+    REG32(IO_MUX_GPIO20_REG) |= (IO_MUX_MCU_SEL_V << 12); 
+    
+    // Nota: Configuración de palabra (8 bits, sin paridad, 1 bit de parada) es el default y se omite por simplicidad.
 }
 
 static void uart_putc(char c) {
@@ -455,7 +477,7 @@ int main(void) {
             // 🔥 NUEVO: Enviar mensaje a la consola
             // \r\n (Carriage Return + New Line) es importante para saltos de línea
             uart_puts("!ATENCION: Deteccion activada. LED detenido.\r\n");
-            
+
         } else{
             ledc_set_duty(duty);
             duty += step;
