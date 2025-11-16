@@ -256,7 +256,7 @@ static void tiny_delay(void) {
     }
 }
 
-/**/
+/*
 static uint32_t hcsr04_measure_pulse(void) {
     uint32_t count = 0;
     uint32_t timeout = 0;
@@ -290,9 +290,9 @@ static uint32_t hcsr04_measure_pulse(void) {
 
     return count;
 }
+*/
 
-
-/*static uint32_t hcsr04_measure_pulse(void) {
+static uint32_t hcsr04_measure_pulse(void) {
     uint64_t start_time = 0;
     uint64_t end_time = 0;
     uint32_t timeout = 0; // Usaremos el timeout para prevenir bucles infinitos
@@ -325,7 +325,6 @@ static uint32_t hcsr04_measure_pulse(void) {
     // Devolver la duración del pulso en µs
     return (uint32_t)(end_time - start_time);
 }
-*/
 
 static void adc_init(void) {
     // Clock/reset del SARADC
