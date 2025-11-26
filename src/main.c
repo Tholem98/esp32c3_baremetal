@@ -26,6 +26,7 @@
 #define IO_MUX_MCU_SEL_GPIO 1U       // Función GPIO
 #define IO_MUX_GPIO2_REG        (DR_REG_IO_MUX_BASE + 0x000C)
 #define IO_MUX_GPIO4_REG        (DR_REG_IO_MUX_BASE + 0x0014)
+#define IO_MUX_GPIO5_REG        (DR_REG_IO_MUX_BASE + 0x0018)
 
 #define SYSTEM_PERIP_CLK_EN0_REG (DR_REG_SYSTEM_BASE + 0x0010) // Registro de clocks
 #define SYSTEM_PERIP_RST_EN0_REG (DR_REG_SYSTEM_BASE + 0x0018) // Registro de resets
@@ -105,7 +106,7 @@
 #define LED_MASK        BIT(LED_GPIO)
 #define LED2_MASK       BIT(LED2_GPIO)
 #define POT_MASK        BIT(POT_GPIO)
-#define TRIG_GPIO       4U      // TRIG del HC-SR04
+#define TRIG_GPIO       5U      // TRIG del HC-SR04
 #define ECHO_GPIO       2U      // ECHO del HC-SR04 (con divisor a 3.3V) entrada
 #define TRIG_MASK       BIT(TRIG_GPIO)
 #define ECHO_MASK       BIT(ECHO_GPIO)
@@ -116,10 +117,19 @@
 
 
 #define ADC_ATTEN_11DB  3U
-#define ADC_THRESHOLD   2000U
+#define ADC_THRESHOLD   1630U
 #define LOOP_DELAY      5000U
+#define ADC_MAX_RANGE       (4095U) // Rango máximo del ADC (12 bits)
+#define ADC_ZERO_BIAS   1630U   // Cuentas residuales con cursor a GND (ajustar según hardware)
 
-#define ADC_ZERO_BIAS   1650U   // Cuentas residuales con cursor a GND (ajustar según hardware)
+// Umbral mínimo de pulso (aprox. 1.7 cm). 
+// Esto asegura que al mínimo del potenciómetro la detección sea muy cercana.
+#define MIN_PULSE_THRESHOLD (1000U) 
+// Umbral máximo de pulso para 50 cm. Este valor ha sido AUMENTADO.
+// Si tu CPU es lenta, el 'count' para 50cm podría ser muy grande.
+#define MAX_PULSE_THRESHOLD (5000U) 
+// Se calcula el rango que el potenciómetro puede cubrir.
+#define PULSE_RANGE         (MAX_PULSE_THRESHOLD - MIN_PULSE_THRESHOLD)
 
 #define LEDC_PWM_FREQ_HZ       2000ULL
 #define LEDC_TIMER_RES_BITS    10U
@@ -177,6 +187,12 @@
 #define DR_REG_TIMG_BASE(i)     (0x60082000UL + (0x1000 * (i)))
 #define DR_REG_TIMG0_BASE       DR_REG_TIMG_BASE(0) // Base del Timer Group 0
 
+//#define SYSTEM_PERIP_CLK_EN0_REG  (DR_REG_SYSTEM_BASE + 0x10)
+//#define SYSTEM_PERIP_RST_EN0_REG  (DR_REG_SYSTEM_BASE + 0x0C)
+
+#define SYSTEM_TIMERGROUP0_CLK_EN BIT(24)
+#define SYSTEM_TIMERGROUP0_RST    BIT(24)
+
 #define TIMG_T0CONFIG_REG       (DR_REG_TIMG0_BASE + 0x0000)
 #define TIMG_T0_EN              BIT(31)     // Habilitar Timer
 #define TIMG_T0_DIVIDER_S       16          // Shift para el divisor de clock
@@ -193,6 +209,8 @@
 #define TIMG_T0_CNT_LOW_REG     (DR_REG_TIMG0_BASE + 0x0004) // Leer contador bajo
 #define TIMG_T0_CNT_HIGH_REG    (DR_REG_TIMG0_BASE + 0x000c) // Leer contador alto
 
+#define TIMG_T0_UPDATE  BIT(31) // bit de update de lectura
+
 // Clock fuente es APB_CLK (80 MHz)
 #define TIMG_DIVIDER_US         80U         // 80 MHz / 80 = 1 MHz (1 tick = 1 µs)
 
@@ -208,11 +226,14 @@ static void gpio_init(void) {
     REG32(IO_MUX_GPIO3_REG) = reg;
     REG32(GPIO_ENABLE_W1TS_REG) = LED_MASK;
 
-    reg = REG32(DR_REG_IO_MUX_BASE + 0x0018);      // IO_MUX_GPIO5_REG (MTDI)
-    reg &= ~(IO_MUX_FUN_IE | IO_MUX_FUN_PU | IO_MUX_FUN_PD | IO_MUX_MCU_SEL_MASK);
-    reg |= (IO_MUX_MCU_SEL_GPIO << 12);
-    REG32(DR_REG_IO_MUX_BASE + 0x0018) = reg;
-    REG32(GPIO_ENABLE_W1TS_REG) = LED2_MASK;
+    uint32_t reg5 = REG32(IO_MUX_GPIO5_REG);
+    reg5 &= ~(IO_MUX_FUN_IE | IO_MUX_FUN_PU | IO_MUX_FUN_PD | IO_MUX_MCU_SEL_MASK);
+    reg5 |= (IO_MUX_MCU_SEL_GPIO << 12);
+    REG32(IO_MUX_GPIO5_REG) = reg5;
+    REG32(GPIO_ENABLE_W1TS_REG) = TRIG_MASK;
+    
+
+    //REG32(IO_MUX_GPIO0_REG) = 0U;
 
     // GPIO0 en modo analógico (sin OE ni pulls) para el potenciómetro
     reg = REG32(IO_MUX_GPIO0_REG);
@@ -220,32 +241,22 @@ static void gpio_init(void) {
     REG32(IO_MUX_GPIO0_REG) = reg;
     REG32(GPIO_ENABLE_W1TC_REG) = POT_MASK;
 
-     // -----------------------------
-    // 🔥 NUEVO: Configurar GPIO2 como ENTRADA DIGITAL
-    // -----------------------------
-    uint32_t reg2 = REG32(DR_REG_IO_MUX_BASE + 0x000C); // IO_MUX_GPIO2_REG
-    reg2 &= ~(IO_MUX_FUN_IE | IO_MUX_FUN_PU | IO_MUX_FUN_PD | IO_MUX_MCU_SEL_MASK);
-    // Habilitar entrada digital
-    reg2 |= IO_MUX_FUN_IE; 
-    // Habilitar Pull-Down (Necesario para asegurar '0' cuando no está pulsado)
-    reg2 |= IO_MUX_FUN_PD; 
-    // Seleccionar función GPIO
+    // CONFIGURACION PARA ECHO (GPIO2) --- ENTRADA DIGITAL
+    uint32_t reg2 = REG32(IO_MUX_GPIO2_REG);
+    reg2 &= ~(IO_MUX_FUN_PU | IO_MUX_FUN_PD | IO_MUX_MCU_SEL_MASK);
+    reg2 |= IO_MUX_FUN_IE; // habilitar entrada digital
+    reg2 |= IO_MUX_FUN_PD;
     reg2 |= (IO_MUX_MCU_SEL_GPIO << 12);
-    REG32(DR_REG_IO_MUX_BASE + 0x000C) = reg2;
+    REG32(IO_MUX_GPIO2_REG) = reg2;
+    // Asegurarse que sea entrada (deshabilitar OE)
+    REG32(GPIO_ENABLE_W1TC_REG) = ECHO_MASK;
 
     // Asegurar que NO sea salida (entrada pura)
-    REG32(GPIO_ENABLE_W1TC_REG) = BUTTON_MASK;
+    //REG32(GPIO_ENABLE_W1TC_REG) = BUTTON_MASK;
     // Deshabilitar OE: ECHO/BUTTON (GPIO2) debe ser una entrada pura
     //REG32(GPIO_ENABLE_W1TC_REG) = ECHO_MASK;
 
-    // ECHO en GPIO4 (entrada)
-    reg = REG32(IO_MUX_GPIO4_REG);
-    reg &= ~(IO_MUX_FUN_PU | IO_MUX_FUN_PD | IO_MUX_MCU_SEL_MASK);
-    reg |= IO_MUX_FUN_IE;                      // habilitar entrada digital
-    reg |= (IO_MUX_MCU_SEL_GPIO << 12);
-    REG32(IO_MUX_GPIO4_REG) = reg;
-    REG32(GPIO_ENABLE_W1TC_REG) = ECHO_MASK;   // asegurar que NO sea salida
-
+    
 }
 
 static void adc_init(void) {
@@ -323,34 +334,32 @@ static void ledc_init(void) {
     ledc_set_duty(0);
 }
 
-
 static void timer_init(void) {
-    // 1. Deshabilitar Timer y limpiar la configuración
-    REG32(TIMG_T0CONFIG_REG) &= ~TIMG_T0_EN; 
-    
-    // 2. Configurar el divisor para 1 µs por tick (80 MHz / 80 = 1 MHz)
-    uint32_t config = 0;
-    config |= (TIMG_DIVIDER_US << TIMG_T0_DIVIDER_S);
-    
-    // 3. Configurar: conteo ascendente (INCREASE), sin autoreload
-    config |= TIMG_T0_INCREASE;
-    config &= ~TIMG_T0_AUTORELOAD;
-    
-    // 4. Escribir configuración
-    REG32(TIMG_T0CONFIG_REG) = config;
-    
-    // 5. Cargar valor inicial 0 al contador (solo para asegurar)
-    REG32(TIMG_T0LOAD_REG) = 0; 
-    REG32(TIMG_T0LOAD_REG) = 0; // Se escribe dos veces para 64-bit
-    REG32(TIMG_T0LOAD_REG) = TIMG_T0_LOAD_EN;
-    
-    // 6. Habilitar el Timer
-    REG32(TIMG_T0CONFIG_REG) |= TIMG_T0_EN; 
+
+REG32(SYSTEM_PERIP_CLK_EN0_REG) |= SYSTEM_TIMERGROUP0_CLK_EN;
+    REG32(SYSTEM_PERIP_RST_EN0_REG) &= ~SYSTEM_TIMERGROUP0_RST;
+
+    uint32_t cfg = REG32(TIMG_T0CONFIG_REG);
+    cfg &= ~TIMG_T0_EN;                 // apagar timer
+    cfg &= ~(0xFF << TIMG_T0_DIVIDER_S);
+    cfg |= (TIMG_DIVIDER_US << TIMG_T0_DIVIDER_S);
+    cfg |= TIMG_T0_INCREASE;            // contar hacia arriba
+    cfg &= ~TIMG_T0_AUTORELOAD;
+    cfg &= ~(3 << TIMG_T0_CLK_SRC_S);
+    cfg |= (1 << TIMG_T0_CLK_SRC_S);    // APB_CLK
+    REG32(TIMG_T0CONFIG_REG) = cfg;
+
+    REG32(TIMG_T0LOAD_REG) = 0;         // inicializar contador
+    REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN; // solo 1 vez para cargar 0
+
+    cfg |= TIMG_T0_EN;                  // encender timer
+    REG32(TIMG_T0CONFIG_REG) = cfg;
 }
 
 
+
 static void uart_init(void) {
-    // --- 1. Activar Clock y Reset UART0 ---
+    /*// --- 1. Activar Clock y Reset UART0 ---
     REG32(SYSTEM_PERIP_CLK_EN0_REG) |= SYSTEM_UART_CLK_EN(0);
     REG32(SYSTEM_PERIP_RST_EN0_REG) |= SYSTEM_UART_RST(0);
     REG32(SYSTEM_PERIP_RST_EN0_REG) &= ~SYSTEM_UART_RST(0);
@@ -380,6 +389,9 @@ static void uart_init(void) {
     REG32(IO_MUX_GPIO20_REG) |= (IO_MUX_MCU_SEL_V << 12); 
     
     // Nota: Configuración de palabra (8 bits, sin paridad, 1 bit de parada) es el default y se omite por simplicidad.
+    */
+        // Solo configurar baud rate: USB-Serial usa UART0 internamente
+    REG32(UART_CLK_DIV_REG(0)) = (347U << 4); // 115200 baud
 }
 
 static uint16_t adc_sample_once(void) {
@@ -435,20 +447,14 @@ static void uart_puts(const char *s) {
     }
 }
 
-
 static uint64_t timer_get_us(void) {
-    // 1. Forzar la actualización de los registros de lectura
-    REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN; 
-    
-    // 2. Leer los 32 bits bajos (µs)
-    uint32_t low = REG32(TIMG_T0_CNT_LOW_REG);
-    
-    // 3. Leer los 16 bits altos (los bits restantes, aunque no serán necesarios para el HC-SR04)
-    uint32_t high = REG32(TIMG_T0_CNT_HIGH_REG);
-    
-    // 4. Combinar y devolver el resultado en µs
-    return ((uint64_t)high << 32) | low;
+
+    REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_UPDATE; // SOLO ESTO
+uint32_t low = REG32(TIMG_T0_CNT_LOW_REG);
+uint32_t high = REG32(TIMG_T0_CNT_HIGH_REG);
+return ((uint64_t)high << 32) | low;
 }
+
 
 
 // ----------------------------------------
@@ -463,8 +469,10 @@ static void tiny_delay(void) {
 
 /*
 static uint32_t hcsr04_measure_pulse(void) {
-    uint32_t count = 0;
-    uint32_t timeout = 0;
+
+    uint64_t start_time = 0;
+    uint64_t end_time = 0;
+    uint32_t timeout = 0; // Usaremos el timeout para prevenir bucles infinitos
 
     // Asegurar TRIG en bajo
     REG32(GPIO_OUT_W1TC_REG) = TRIG_MASK;
@@ -484,35 +492,7 @@ static uint32_t hcsr04_measure_pulse(void) {
     if (timeout >= HCSR04_TIMEOUT) {
         return 0;   // no llegó pulso
     }
-
-    // Medir cuánto tiempo se mantiene en alto
-    while ((REG32(GPIO_IN_REG) & ECHO_MASK) != 0U) {
-        count++;
-        if (count >= HCSR04_TIMEOUT) {
-            break;  // por seguridad
-        }
-    }
-
-    return count;
-}
-*/
-
-static uint32_t hcsr04_measure_pulse(void) {
-    uint64_t start_time = 0;
-    uint64_t end_time = 0;
-    uint32_t timeout = 0; // Usaremos el timeout para prevenir bucles infinitos
-
-    // ... (Generación del pulso TRIG y tiny_delay se mantienen igual) ...
-
-    // Esperar a que ECHO se ponga en alto (inicio pulso)
-    while (((REG32(GPIO_IN_REG) & ECHO_MASK) == 0U) && (timeout < HCSR04_TIMEOUT)) {
-        timeout++;
-    }
-    if (timeout >= HCSR04_TIMEOUT) {
-        return 0;   // no llegó pulso
-    }
-    
-    // 🔥 Capturar Tiempo de Inicio (en µs)
+ // 🔥 Capturar Tiempo de Inicio (en µs)
     start_time = timer_get_us();
 
     // Medir cuánto tiempo se mantiene en alto (Timer con Polling)
@@ -529,15 +509,104 @@ static uint32_t hcsr04_measure_pulse(void) {
 
     // Devolver la duración del pulso en µs
     return (uint32_t)(end_time - start_time);
+    /////////////////////////////////////////////////////////////////////
+  const uint32_t timeout_us = 30000U; // 30 ms timeout (ajustá si querés)
+    uint64_t t0, t1;
+    uint64_t deadline;
+
+    // 1) Asegurar TRIG = 0
+    REG32(GPIO_OUT_W1TC_REG) = TRIG_MASK;
+    // pequeño delay para estabilizar nivel
+    for (volatile int i=0; i<200; ++i) __asm__ volatile("nop");
+
+    // 2) Pulso TRIG ~10 us (hacemos ~12-15us para estar tranquilos)
+    REG32(GPIO_OUT_W1TS_REG) = TRIG_MASK;
+    // delay calibrado: 10-15 us con loop (si querés precision usar timer)
+    for (volatile int i=0; i<1200; ++i) __asm__ volatile("nop"); // ajustá si hace falta
+    REG32(GPIO_OUT_W1TC_REG) = TRIG_MASK;
+
+    // 3) Esperar subida de ECHO (con timeout usando timer_get_us)
+    // Forzar snapshot antes de leer timer
+    REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN;
+    t0 = timer_get_us();
+    deadline = t0 + timeout_us;
+
+    // Esperar a que ECHO sea HIGH
+    while ((REG32(GPIO_IN_REG) & ECHO_MASK) == 0U) {
+        REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN;
+        uint64_t now = timer_get_us();
+        if (now >= deadline) return 0; // timeout esperando subida
+    }
+
+    // 4) Capturar tiempo de inicio (usar snapshot)
+    REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN;
+    t0 = timer_get_us();
+
+    // 5) Esperar a que ECHO vuelva a LOW (pulso final)
+    while ((REG32(GPIO_IN_REG) & ECHO_MASK) != 0U) {
+        REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN;
+        uint64_t now = timer_get_us();
+        if (now >= deadline) return 0; // timeout esperando bajada
+    }
+
+    // 6) Capturar tiempo de fin
+    REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN;
+    t1 = timer_get_us();
+
+    // 7) Retornar diferencia en µs
+    if (t1 > t0) return (uint32_t)(t1 - t0);
+    return 0;
+}*/
+
+ static uint32_t hcsr04_measure_pulse(void) {
+    uint32_t count = 0;
+    uint32_t timeout = 0;
+    // Asegurar TRIG en bajo
+    REG32(GPIO_OUT_W1TC_REG) = TRIG_MASK;
+    tiny_delay();
+    // Pulso de 10µs aprox en TRIG
+    REG32(GPIO_OUT_W1TS_REG) = TRIG_MASK;
+    for (volatile uint32_t i = 0; i < 2000; ++i) { // ajuste fino si querés
+        __asm__ volatile("nop");
+    }
+    REG32(GPIO_OUT_W1TC_REG) = TRIG_MASK;
+    // Esperar a que ECHO se ponga en alto (inicio pulso)
+    while (((REG32(GPIO_IN_REG) & ECHO_MASK) == 0U) && (timeout < HCSR04_TIMEOUT)) {
+        timeout++;
+    }
+    if (timeout >= HCSR04_TIMEOUT) {
+        return 0;   // no llegó pulso
+    }
+    // Medir cuánto tiempo se mantiene en alto
+    while ((REG32(GPIO_IN_REG) & ECHO_MASK) != 0U) {
+        count++;
+        if (count >= HCSR04_TIMEOUT) {
+            break;  // por seguridad
+        }
+    }
+    return count;
+} 
+
+#define TIMG_T0LO_REG         (*(volatile uint32_t*)(TIMG0_BASE + 0x0004))
+#define TIMG_T0HI_REG         (*(volatile uint32_t*)(TIMG0_BASE + 0x0008))
+#define TIMG_T0UPDATE_REG     (*(volatile uint32_t*)(TIMG0_BASE + 0x000C))
+
+static uint64_t t0_now_us(void)
+{
+    TIMG_T0UPDATE_REG = (1U << 31);
+    while (TIMG_T0UPDATE_REG & (1U << 31)) { }
+    uint32_t lo = TIMG_T0LO_REG;
+    uint32_t hi = TIMG_T0HI_REG;
+    return (((uint64_t)hi) << 32) | lo;
 }
 
-
 int main(void) {
+    
     // Deshabilitar watchdogs para bucle infinito didáctico
     disable_timg_wdt(TIMG0_BASE);
     disable_timg_wdt(TIMG1_BASE);
     disable_rtc_wdts();
-
+    
     // Inicializaciones básicas
     gpio_init();
     adc_init();    
@@ -552,52 +621,83 @@ int main(void) {
     int8_t step = 1;
 
     while (1) {
-        /*
-        uint32_t pulse = hcsr04_measure_pulse();
+/*
+        uint64_t a = t0_now_us(); 
+        tiny_delay(); 
+        uint64_t b = t0_now_us(); 
+        if (b != a) { 
+            ledc_set_duty(0); // TIMER ANDA 
+        } else { 
+            uint32_t sample = adc_sample_once();
+            uint32_t pwm_input = (sample > ADC_ZERO_BIAS) ? (sample - ADC_ZERO_BIAS) : 0U;
+            uint32_t pwm_range = 4095U - ADC_ZERO_BIAS;
+            uint32_t duty = (pwm_input * LEDC_DUTY_MAX) / pwm_range;
+            ledc_set_duty(duty); 
+            if ((REG32(GPIO_IN_REG)& BUTTON_MASK) != 0U){ 
+                ledc_set_duty(LEDC_DUTY_MAX); 
+            } 
+        } 
+        short_delay();
+
+
+        /*uint32_t pulse = hcsr04_measure_pulse();
 
         if (pulse == 0) {
-            ledc_set_duty(LEDC_DUTY_MAX);       // sin pulso → LED apagado
-        } else if (pulse > 2000) {
-            ledc_set_duty(200);     // pulso chico → objeto lejos
+
+            uint32_t sample = adc_sample_once();
+            uart_puts("pulso siempre 0.\r\n"); // Mensaje de inicio
+            if (sample <= ADC_THRESHOLD){
+                ledc_set_duty(duty);
+                duty += step;
+
+                if (duty == LEDC_DUTY_MAX || duty == 0) {
+                    step = -step; // Cambio de dirección
+                }       // sin pulso → LED apagado
+            }else{
+                uint32_t pwm_input = (sample > ADC_ZERO_BIAS) ? (sample - ADC_ZERO_BIAS) : 0U;
+                uint32_t pwm_range = 4095U - ADC_ZERO_BIAS;
+                uint32_t duty = (pwm_input * LEDC_DUTY_MAX) / pwm_range;
+                ledc_set_duty(duty);
+                uart_puts("Algo.\r\n"); // Mensaje de inicio
+            }
+
+        } else if (pulse <= HCSR04_NEAR_THRESHOLD) {
+            ledc_set_duty(LEDC_DUTY_MAX);     // pulso chico → objeto lejos
         } else {
             ledc_set_duty(0); // pulso grande → objeto cerca
         }
-
-        short_delay();
-        
-        */
+        short_delay();*/
         
         // 🔥 Leer GPIO2 digital
-        uint32_t button = (REG32(GPIO_IN_REG)& BUTTON_MASK) != 0U;
+        //uint32_t button = (REG32(GPIO_IN_REG)& BUTTON_MASK) != 0U;
 
         // Medir pulso del HC-SR04
-        //uint32_t pulse = hcsr04_measure_pulse(); //Descomentar esta y comentar la de arriba para usar el sensor
-        // 1. 🔥 Leer ADC para obtener un desplazamiento (offset)
-        //uint16_t raw_adc = adc_sample_once(); 
+        uint32_t pulse = hcsr04_measure_pulse(); //Descomentar esta y comentar la de arriba para usar el sensor
 
-        // 2. Mapear el ADC (0-4095) a un rango de OFFSET (ej. de 0 a 3000 ticks)
-        // Esto permite que el umbral aumente hasta 3000 ticks más que el base.
-        //uint32_t threshold_offset = (raw_adc * 3000U / 4095U); 
+            uint16_t sample = adc_sample_once(); 
+            uint32_t dynamic_offset = ( (uint32_t)sample * PULSE_RANGE) / ADC_MAX_RANGE;
+            uint32_t dynamic_threshold = MIN_PULSE_THRESHOLD + dynamic_offset-ADC_ZERO_BIAS;
 
-        // 3. Establecer el umbral dinámico usando el valor base + offset
-        //uint32_t dynamic_threshold = HCSR04_NEAR_THRESHOLD + threshold_offset;
 
-        // if (pulse > dynamic_threshold) {//><  // Si el pulso es mayor que cierto umbral → objeto "cerca"
-        if (button) { //comentar esta y descomentar la de arriba para usar el sensor
-            // Si el pin está ALTO → LED detiene el fade
-            ledc_set_duty(duty);
+         if (pulse < dynamic_threshold) {//>< 
+            /*uint16_t sample = adc_sample_once(); 
+            uint32_t pwm_input = sample-ADC_THRESHOLD;
+            uint32_t pwm_range = 4095U; 
+            uint32_t dynamic_threshold = (*pwm_input) / pwm_range;*/
+            ledc_set_duty(LEDC_DUTY_MAX);
 
             // 🔥 NUEVO: Enviar mensaje a la consola
             // \r\n (Carriage Return + New Line) es importante para saltos de línea
             uart_puts("!ATENCION: Deteccion activada. LED detenido.\r\n");
 
         } else{
-            ledc_set_duty(duty);
+            ledc_set_duty(0);
+            /*ledc_set_duty(duty);
             duty += step;
 
             if (duty == LEDC_DUTY_MAX || duty == 0) {
                 step = -step; // Cambio de dirección
-            }
+            }*/
         }
         
         short_delay();

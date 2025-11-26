@@ -15,38 +15,38 @@ LOAD build/startup.o
 LOAD build/main.o
                 0x3fce0000                        PROVIDE (_stack_top = (ORIGIN (DRAM) + LENGTH (DRAM)))
 
-.text           0x42000000      0x42c
+.text           0x42000000      0x474
                 0x42000000                        _stext = .
  *(.init)
  .init          0x42000000       0x5e build/startup.o
                 0x42000000                _start
  *(.text .text.*)
  .text          0x4200005e        0x0 build/startup.o
- .text          0x4200005e       0x1c build/main.o
- .text.startup  0x4200007a      0x3b0 build/main.o
-                0x4200007a                main
+ .text          0x4200005e       0x46 build/main.o
+ .text.startup  0x420000a4      0x3ce build/main.o
+                0x420000a4                main
  *(.gnu.linkonce.t.*)
-                0x4200042c                        . = ALIGN (0x4)
- *fill*         0x4200042a        0x2 
-                0x4200042c                        _etext = .
+                0x42000474                        . = ALIGN (0x4)
+ *fill*         0x42000472        0x2 
+                0x42000474                        _etext = .
 
-.rodata         0x3c000000       0x48 load address 0x4200042c
+.rodata         0x3c000000       0x78 load address 0x42000474
                 0x3c000000                        . = ALIGN (0x4)
                 0x3c000000                        _srodata = .
  *(.rodata .rodata.*)
  .rodata.str1.4
-                0x3c000000       0x2d build/main.o
- *fill*         0x3c00002d        0x3 
- .rodata        0x3c000030       0x18 build/main.o
+                0x3c000000       0x5f build/main.o
+ *fill*         0x3c00005f        0x1 
+ .rodata        0x3c000060       0x18 build/main.o
  *(.srodata .srodata.*)
  *(.gnu.linkonce.r.*)
-                0x3c000048                        . = ALIGN (0x4)
-                0x3c000048                        _erodata = .
+                0x3c000078                        . = ALIGN (0x4)
+                0x3c000078                        _erodata = .
 
-.rela.dyn       0x3c000048        0x0 load address 0x42000474
- .rela.init     0x3c000048        0x0 build/startup.o
+.rela.dyn       0x3c000078        0x0 load address 0x420004ec
+ .rela.init     0x3c000078        0x0 build/startup.o
 
-.data           0x3fc80000        0x0 load address 0x42000474
+.data           0x3fc80000        0x0 load address 0x420004ec
                 0x3fc80000                        . = ALIGN (0x4)
                 0x3fc80000                        _sdata = .
  *(.data .data.*)
@@ -57,7 +57,7 @@ LOAD build/main.o
                 0x3fc80000                        _edata = .
                 [!provide]                        PROVIDE (_sidata = LOADADDR (.data))
 
-.bss            0x3fc80000       0x40 load address 0x42000474
+.bss            0x3fc80000       0x40 load address 0x420004ec
                 0x3fc80000                        . = ALIGN (0x8)
                 0x3fc80000                        _sbss = .
  *(.bss .bss.*)
