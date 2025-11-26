@@ -112,9 +112,8 @@
 #define ECHO_MASK       BIT(ECHO_GPIO)
 
 // HC-SR04
-#define HCSR04_TIMEOUT       40000U   // Iteraciones máx esperando
+#define HCSR04_TIMEOUT       114500U   // Iteraciones máx esperando
 #define HCSR04_NEAR_THRESHOLD 300U   // Umbral "cerca" (ajustable)
-
 
 #define ADC_ATTEN_11DB  3U
 #define ADC_THRESHOLD   1630U
@@ -144,7 +143,6 @@
 #if ((LEDC_TIMER_DIVIDER_NUM / LEDC_TIMER_DIVIDER_DEN) == 0) || ((LEDC_TIMER_DIVIDER_NUM / LEDC_TIMER_DIVIDER_DEN) > 0x3FFFFU)
 #error "LEDC_TIMER_DIVIDER fuera de rango para el campo de 18 bits"
 #endif
-
 
 #define DR_REG_UART_BASE(i)     (0x60000000UL + (0x1000 * (i))) // Base para UART0 (i=0) y UART1 (i=1)
 
@@ -186,9 +184,6 @@
 //TIMER
 #define DR_REG_TIMG_BASE(i)     (0x60082000UL + (0x1000 * (i)))
 #define DR_REG_TIMG0_BASE       DR_REG_TIMG_BASE(0) // Base del Timer Group 0
-
-//#define SYSTEM_PERIP_CLK_EN0_REG  (DR_REG_SYSTEM_BASE + 0x10)
-//#define SYSTEM_PERIP_RST_EN0_REG  (DR_REG_SYSTEM_BASE + 0x0C)
 
 #define SYSTEM_TIMERGROUP0_CLK_EN BIT(24)
 #define SYSTEM_TIMERGROUP0_RST    BIT(24)
@@ -232,7 +227,6 @@ static void gpio_init(void) {
     REG32(IO_MUX_GPIO5_REG) = reg5;
     REG32(GPIO_ENABLE_W1TS_REG) = TRIG_MASK;
     
-
     //REG32(IO_MUX_GPIO0_REG) = 0U;
 
     // GPIO0 en modo analógico (sin OE ni pulls) para el potenciómetro
@@ -254,9 +248,7 @@ static void gpio_init(void) {
     // Asegurar que NO sea salida (entrada pura)
     //REG32(GPIO_ENABLE_W1TC_REG) = BUTTON_MASK;
     // Deshabilitar OE: ECHO/BUTTON (GPIO2) debe ser una entrada pura
-    //REG32(GPIO_ENABLE_W1TC_REG) = ECHO_MASK;
-
-    
+    //REG32(GPIO_ENABLE_W1TC_REG) = ECHO_MASK;   
 }
 
 static void adc_init(void) {
@@ -336,7 +328,7 @@ static void ledc_init(void) {
 
 static void timer_init(void) {
 
-REG32(SYSTEM_PERIP_CLK_EN0_REG) |= SYSTEM_TIMERGROUP0_CLK_EN;
+    REG32(SYSTEM_PERIP_CLK_EN0_REG) |= SYSTEM_TIMERGROUP0_CLK_EN;
     REG32(SYSTEM_PERIP_RST_EN0_REG) &= ~SYSTEM_TIMERGROUP0_RST;
 
     uint32_t cfg = REG32(TIMG_T0CONFIG_REG);
@@ -355,8 +347,6 @@ REG32(SYSTEM_PERIP_CLK_EN0_REG) |= SYSTEM_TIMERGROUP0_CLK_EN;
     cfg |= TIMG_T0_EN;                  // encender timer
     REG32(TIMG_T0CONFIG_REG) = cfg;
 }
-
-
 
 static void uart_init(void) {
     /*// --- 1. Activar Clock y Reset UART0 ---
@@ -436,7 +426,6 @@ static void uart_putc(char c) {
         // Busy-wait
         __asm__ volatile("nop");
     }
-    
     // Escribir el carácter al registro FIFO (dirección 0x60000000)
     REG32(UART_FIFO_REG(0)) = (uint32_t)c;
 }
@@ -448,14 +437,11 @@ static void uart_puts(const char *s) {
 }
 
 static uint64_t timer_get_us(void) {
-
     REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_UPDATE; // SOLO ESTO
-uint32_t low = REG32(TIMG_T0_CNT_LOW_REG);
-uint32_t high = REG32(TIMG_T0_CNT_HIGH_REG);
-return ((uint64_t)high << 32) | low;
+    uint32_t low = REG32(TIMG_T0_CNT_LOW_REG);
+    uint32_t high = REG32(TIMG_T0_CNT_HIGH_REG);
+    return ((uint64_t)high << 32) | low;
 }
-
-
 
 // ----------------------------------------
 // Medir pulso del HC-SR04 (ECHO)
@@ -467,98 +453,7 @@ static void tiny_delay(void) {
     }
 }
 
-/*
-static uint32_t hcsr04_measure_pulse(void) {
-
-    uint64_t start_time = 0;
-    uint64_t end_time = 0;
-    uint32_t timeout = 0; // Usaremos el timeout para prevenir bucles infinitos
-
-    // Asegurar TRIG en bajo
-    REG32(GPIO_OUT_W1TC_REG) = TRIG_MASK;
-    tiny_delay();
-
-    // Pulso de 10µs aprox en TRIG
-    REG32(GPIO_OUT_W1TS_REG) = TRIG_MASK;
-    for (volatile uint32_t i = 0; i < 2000; ++i) { // ajuste fino si querés
-        __asm__ volatile("nop");
-    }
-    REG32(GPIO_OUT_W1TC_REG) = TRIG_MASK;
-
-    // Esperar a que ECHO se ponga en alto (inicio pulso)
-    while (((REG32(GPIO_IN_REG) & ECHO_MASK) == 0U) && (timeout < HCSR04_TIMEOUT)) {
-        timeout++;
-    }
-    if (timeout >= HCSR04_TIMEOUT) {
-        return 0;   // no llegó pulso
-    }
- // 🔥 Capturar Tiempo de Inicio (en µs)
-    start_time = timer_get_us();
-
-    // Medir cuánto tiempo se mantiene en alto (Timer con Polling)
-    timeout = 0;
-    while ((REG32(GPIO_IN_REG) & ECHO_MASK) != 0U && (timeout < HCSR04_TIMEOUT)) {
-        timeout++; // Incrementamos el timeout para evitar hang
-    }
-    if (timeout >= HCSR04_TIMEOUT) {
-        // Pulso demasiado largo, error o fuera de rango.
-    }
-    
-    // 🔥 Capturar Tiempo de Fin (en µs)
-    end_time = timer_get_us();
-
-    // Devolver la duración del pulso en µs
-    return (uint32_t)(end_time - start_time);
-    /////////////////////////////////////////////////////////////////////
-  const uint32_t timeout_us = 30000U; // 30 ms timeout (ajustá si querés)
-    uint64_t t0, t1;
-    uint64_t deadline;
-
-    // 1) Asegurar TRIG = 0
-    REG32(GPIO_OUT_W1TC_REG) = TRIG_MASK;
-    // pequeño delay para estabilizar nivel
-    for (volatile int i=0; i<200; ++i) __asm__ volatile("nop");
-
-    // 2) Pulso TRIG ~10 us (hacemos ~12-15us para estar tranquilos)
-    REG32(GPIO_OUT_W1TS_REG) = TRIG_MASK;
-    // delay calibrado: 10-15 us con loop (si querés precision usar timer)
-    for (volatile int i=0; i<1200; ++i) __asm__ volatile("nop"); // ajustá si hace falta
-    REG32(GPIO_OUT_W1TC_REG) = TRIG_MASK;
-
-    // 3) Esperar subida de ECHO (con timeout usando timer_get_us)
-    // Forzar snapshot antes de leer timer
-    REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN;
-    t0 = timer_get_us();
-    deadline = t0 + timeout_us;
-
-    // Esperar a que ECHO sea HIGH
-    while ((REG32(GPIO_IN_REG) & ECHO_MASK) == 0U) {
-        REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN;
-        uint64_t now = timer_get_us();
-        if (now >= deadline) return 0; // timeout esperando subida
-    }
-
-    // 4) Capturar tiempo de inicio (usar snapshot)
-    REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN;
-    t0 = timer_get_us();
-
-    // 5) Esperar a que ECHO vuelva a LOW (pulso final)
-    while ((REG32(GPIO_IN_REG) & ECHO_MASK) != 0U) {
-        REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN;
-        uint64_t now = timer_get_us();
-        if (now >= deadline) return 0; // timeout esperando bajada
-    }
-
-    // 6) Capturar tiempo de fin
-    REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN;
-    t1 = timer_get_us();
-
-    // 7) Retornar diferencia en µs
-    if (t1 > t0) return (uint32_t)(t1 - t0);
-    return 0;
-}*/
-
- static uint32_t hcsr04_measure_pulse(void) {
+static uint32_t hcsr04_measure_pulse(uint32_t threshold) {
     uint32_t count = 0;
     uint32_t timeout = 0;
     // Asegurar TRIG en bajo
@@ -571,16 +466,16 @@ static uint32_t hcsr04_measure_pulse(void) {
     }
     REG32(GPIO_OUT_W1TC_REG) = TRIG_MASK;
     // Esperar a que ECHO se ponga en alto (inicio pulso)
-    while (((REG32(GPIO_IN_REG) & ECHO_MASK) == 0U) && (timeout < HCSR04_TIMEOUT)) {
+    while (((REG32(GPIO_IN_REG) & ECHO_MASK) == 0U) && (timeout < (HCSR04_TIMEOUT-threshold))) {
         timeout++;
     }
-    if (timeout >= HCSR04_TIMEOUT) {
+    if (timeout >= (HCSR04_TIMEOUT-threshold)) {
         return 0;   // no llegó pulso
     }
     // Medir cuánto tiempo se mantiene en alto
     while ((REG32(GPIO_IN_REG) & ECHO_MASK) != 0U) {
         count++;
-        if (count >= HCSR04_TIMEOUT) {
+        if (count >= (HCSR04_TIMEOUT-threshold)) {
             break;  // por seguridad
         }
     }
@@ -638,53 +533,23 @@ int main(void) {
             } 
         } 
         short_delay();
-
-
-        /*uint32_t pulse = hcsr04_measure_pulse();
-
-        if (pulse == 0) {
-
-            uint32_t sample = adc_sample_once();
-            uart_puts("pulso siempre 0.\r\n"); // Mensaje de inicio
-            if (sample <= ADC_THRESHOLD){
-                ledc_set_duty(duty);
-                duty += step;
-
-                if (duty == LEDC_DUTY_MAX || duty == 0) {
-                    step = -step; // Cambio de dirección
-                }       // sin pulso → LED apagado
-            }else{
-                uint32_t pwm_input = (sample > ADC_ZERO_BIAS) ? (sample - ADC_ZERO_BIAS) : 0U;
-                uint32_t pwm_range = 4095U - ADC_ZERO_BIAS;
-                uint32_t duty = (pwm_input * LEDC_DUTY_MAX) / pwm_range;
-                ledc_set_duty(duty);
-                uart_puts("Algo.\r\n"); // Mensaje de inicio
-            }
-
-        } else if (pulse <= HCSR04_NEAR_THRESHOLD) {
-            ledc_set_duty(LEDC_DUTY_MAX);     // pulso chico → objeto lejos
-        } else {
-            ledc_set_duty(0); // pulso grande → objeto cerca
-        }
-        short_delay();*/
-        
         // 🔥 Leer GPIO2 digital
         //uint32_t button = (REG32(GPIO_IN_REG)& BUTTON_MASK) != 0U;
+*/
+
+        uint16_t sample = adc_sample_once(); 
+        uint32_t dynamic_offset = ( (uint32_t)sample*2);
+        //uint32_t dynamic_threshold = MIN_PULSE_THRESHOLD + dynamic_offset-ADC_ZERO_BIAS;
 
         // Medir pulso del HC-SR04
-        uint32_t pulse = hcsr04_measure_pulse(); //Descomentar esta y comentar la de arriba para usar el sensor
+        uint32_t pulse = hcsr04_measure_pulse(dynamic_offset); //Descomentar esta y comentar la de arriba para usar el sensor
 
+
+         if (pulse == 0) {//>< 
             uint16_t sample = adc_sample_once(); 
-            uint32_t dynamic_offset = ( (uint32_t)sample * PULSE_RANGE) / ADC_MAX_RANGE;
-            uint32_t dynamic_threshold = MIN_PULSE_THRESHOLD + dynamic_offset-ADC_ZERO_BIAS;
-
-
-         if (pulse < dynamic_threshold) {//>< 
-            /*uint16_t sample = adc_sample_once(); 
-            uint32_t pwm_input = sample-ADC_THRESHOLD;
-            uint32_t pwm_range = 4095U; 
-            uint32_t dynamic_threshold = (*pwm_input) / pwm_range;*/
-            ledc_set_duty(LEDC_DUTY_MAX);
+            uint32_t pwm_input = sample - ADC_THRESHOLD;
+            uint32_t dynamic_duty = (LEDC_DUTY_MAX*pwm_input) /ADC_MAX_RANGE;
+            ledc_set_duty(LEDC_DUTY_MAX);//dynamic_duty);
 
             // 🔥 NUEVO: Enviar mensaje a la consola
             // \r\n (Carriage Return + New Line) es importante para saltos de línea
@@ -692,7 +557,7 @@ int main(void) {
 
         } else{
             ledc_set_duty(0);
-            /*ledc_set_duty(duty);
+            /*ledc_set_duty((pulse*duty)/100);
             duty += step;
 
             if (duty == LEDC_DUTY_MAX || duty == 0) {
