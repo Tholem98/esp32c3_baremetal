@@ -27,6 +27,9 @@
 #define IO_MUX_GPIO2_REG        (DR_REG_IO_MUX_BASE + 0x000C)
 #define IO_MUX_GPIO4_REG        (DR_REG_IO_MUX_BASE + 0x0014)
 #define IO_MUX_GPIO5_REG        (DR_REG_IO_MUX_BASE + 0x0018)
+#define IO_MUX_GPIO6_REG        (DR_REG_IO_MUX_BASE + 0x001C)
+#define IO_MUX_GPIO8_REG        (DR_REG_IO_MUX_BASE + 0x0024)
+#define IO_MUX_GPIO10_REG       (DR_REG_IO_MUX_BASE + 0x002C)
 
 #define SYSTEM_PERIP_CLK_EN0_REG (DR_REG_SYSTEM_BASE + 0x0010) // Registro de clocks
 #define SYSTEM_PERIP_RST_EN0_REG (DR_REG_SYSTEM_BASE + 0x0018) // Registro de resets
@@ -99,12 +102,14 @@
 #define LEDC_LS_SIG_OUT0_IDX    45U  // Señal PWM canal 0 (low-speed)
 
 #define LED_GPIO        3U
-#define LED2_GPIO       5U
+#define GPIO6_GPIO       6U
+#define GPIO8_GPIO       8U
 #define POT_GPIO        0U
-#define BUTTON_GPIO     2U   // <---- Pin de entrada Boton y ECHO
+#define BUTTON_GPIO     10U   // <---- Pin de entrada Boton y ECHO
 #define BUTTON_MASK     BIT(BUTTON_GPIO)
 #define LED_MASK        BIT(LED_GPIO)
-#define LED2_MASK       BIT(LED2_GPIO)
+#define GPIO6_MASK       BIT(GPIO6_GPIO)
+#define GPIO8_MASK       BIT(GPIO8_GPIO)
 #define POT_MASK        BIT(POT_GPIO)
 #define TRIG_GPIO       5U      // TRIG del HC-SR04
 #define ECHO_GPIO       2U      // ECHO del HC-SR04 (con divisor a 3.3V) entrada
@@ -156,6 +161,20 @@
 #define UART_TXFIFO_CNT_M       (0x1FFU << UART_TXFIFO_CNT_S)// Máscara
 #define UART_FIFO_SIZE          0x7FU// Tamaño del FIFO (128 bytes)
 
+/* --- Defines que faltaban --- */
+#define IO_MUX_MCU_SEL_S      12U   // shift para seleccionar la función MCU (3 bits)
+#define IO_MUX_FUN_DRV_S      0U    // si querés control de drive (opcional)
+#define IO_MUX_FUN_DRV_MASK   (0x3U << IO_MUX_FUN_DRV_S)
+
+/* UART registros (offsets conocidos) */
+#define UART_CONF0_REG(i)     (DR_REG_UART_BASE(i) + 0x0020) // Registro de Configuración 0 (8N1)
+#define UART_BIT_NUM_S          2U //Shift para data bits (3=8 bits)
+#define UART_STOP_BIT_NUM_S     4U //Shift para stop bits (1=1 bit)
+#define UART_PARITY_EN          BIT(1)
+#define UART_CLKDIV_REG(i)    (DR_REG_UART_BASE(i) + 0x0014) // ya tenías este define
+#define UART_FIFO_REG(i)      (DR_REG_UART_BASE(i) + 0x0000) // ya lo tenías
+/* UART_STATUS_REG(i) ya lo tenías definido y sirve para ver si TX FIFO está lleno */
+
 #define SYSTEM_UART_CLK_EN(i)   (1U << (i))       // i=0 para UART0, i=1 para UART1
 #define SYSTEM_UART_RST(i)      (1U << (i))
 
@@ -197,8 +216,8 @@
 
 #define TIMG_T0LOAD_REG         (DR_REG_TIMG0_BASE + 0x0008) // Cargar valor inicial
 #define TIMG_T0LOAD_LOW_REG     (DR_REG_TIMG0_BASE + 0x0004) // Contador bajo (32 bits)
-#define TIMG_T0LOAD_HIGH_REG    (DR_REG_TIMG0_BASE + 0x000c) // Contador alto (16 bits)
-#define TIMG_T0_UPDATE_REG      (DR_REG_TIMG0_BASE + 0x0010) // Forzar actualización de lectura
+#define TIMG_T0LOAD_HIGH_REG    (DR_REG_TIMG0_BASE + 0x0010) // Contador alto (16 bits)
+#define TIMG_T0_UPDATE_REG      (DR_REG_TIMG0_BASE + 0x00c) // Forzar actualización de lectura
 #define TIMG_T0_LOAD_EN         BIT(31)     // Habilitar la carga
 
 #define TIMG_T0_CNT_LOW_REG     (DR_REG_TIMG0_BASE + 0x0004) // Leer contador bajo
@@ -209,12 +228,18 @@
 // Clock fuente es APB_CLK (80 MHz)
 #define TIMG_DIVIDER_US         80U         // 80 MHz / 80 = 1 MHz (1 tick = 1 µs)
 
+#define TIMG_T0LO_REG         (*(volatile uint32_t*)(TIMG0_BASE + 0x0004))
+#define TIMG_T0HI_REG         (*(volatile uint32_t*)(TIMG0_BASE + 0x0008))
+#define TIMG_T0UPDATE_REG     (*(volatile uint32_t*)(TIMG0_BASE + 0x000C))
+
+#define STATE_IDLE 0
+#define STATE_FADE_1 1
+#define STATE_FADE_2 2
+
 static void ledc_set_duty(uint32_t duty);
 
-static uint64_t timer_get_us(void);
-
 static void gpio_init(void) {
-    // GPIO3 queda como salida controlada por LEDC (sin pulls, función GPIO)
+     // GPIO3 queda como salida controlada por LEDC (sin pulls, función GPIO)
     uint32_t reg = REG32(IO_MUX_GPIO3_REG);
     reg &= ~(IO_MUX_FUN_IE | IO_MUX_FUN_PU | IO_MUX_FUN_PD | IO_MUX_MCU_SEL_MASK);
     reg |= (IO_MUX_MCU_SEL_GPIO << 12);
@@ -226,8 +251,6 @@ static void gpio_init(void) {
     reg5 |= (IO_MUX_MCU_SEL_GPIO << 12);
     REG32(IO_MUX_GPIO5_REG) = reg5;
     REG32(GPIO_ENABLE_W1TS_REG) = TRIG_MASK;
-    
-    //REG32(IO_MUX_GPIO0_REG) = 0U;
 
     // GPIO0 en modo analógico (sin OE ni pulls) para el potenciómetro
     reg = REG32(IO_MUX_GPIO0_REG);
@@ -245,10 +268,40 @@ static void gpio_init(void) {
     // Asegurarse que sea entrada (deshabilitar OE)
     REG32(GPIO_ENABLE_W1TC_REG) = ECHO_MASK;
 
-    // Asegurar que NO sea salida (entrada pura)
-    //REG32(GPIO_ENABLE_W1TC_REG) = BUTTON_MASK;
-    // Deshabilitar OE: ECHO/BUTTON (GPIO2) debe ser una entrada pura
-    //REG32(GPIO_ENABLE_W1TC_REG) = ECHO_MASK;   
+    // --- GPIO6 como salida ---
+    uint32_t reg6 = REG32(IO_MUX_GPIO6_REG);
+    // Limpiar pulls, input-enable y función alternativa
+    reg6 &= ~(IO_MUX_FUN_IE | IO_MUX_FUN_PU | IO_MUX_FUN_PD | IO_MUX_MCU_SEL_MASK);
+    // Seleccionar función GPIO a través de la GPIO Matrix
+    reg6 |= (IO_MUX_MCU_SEL_GPIO << 12);
+    REG32(IO_MUX_GPIO6_REG) = reg6;
+    // Habilitar salida (OE = 1)
+    REG32(GPIO_ENABLE_W1TS_REG) = GPIO6_MASK;
+
+    // --- GPIO8 como salida ---
+    uint32_t reg8 = REG32(IO_MUX_GPIO8_REG);
+    // Limpiar pulls, input-enable y función alternativa
+    reg8 &= ~(IO_MUX_FUN_IE | IO_MUX_FUN_PU | IO_MUX_FUN_PD | IO_MUX_MCU_SEL_MASK);
+    // Seleccionar función GPIO a través de la GPIO Matrix
+    reg8 |= (IO_MUX_MCU_SEL_GPIO << 12);
+    REG32(IO_MUX_GPIO8_REG) = reg8;
+    // Habilitar salida (OE = 1)
+    REG32(GPIO_ENABLE_W1TS_REG) = GPIO8_MASK;
+    
+     // Configuración GPIO10 como entrada con pull-down
+    uint32_t reg10 = REG32(IO_MUX_GPIO10_REG);
+    // limpiar PU, IE, PD, MCU_SEL
+    reg10 &= ~(IO_MUX_FUN_PU | IO_MUX_FUN_IE | IO_MUX_FUN_PD | IO_MUX_MCU_SEL_MASK);
+    // activar pull-down
+    reg10 |= IO_MUX_FUN_PD;
+    // habilitar input digital
+    reg10 |= IO_MUX_FUN_IE;
+    // seleccionar función GPIO
+    reg10 |= (IO_MUX_MCU_SEL_GPIO << 12);
+    REG32(IO_MUX_GPIO10_REG) = reg10;
+    // asegurarse que sea ENTRADA
+    REG32(GPIO_ENABLE_W1TC_REG) = BUTTON_MASK;
+
 }
 
 static void adc_init(void) {
@@ -325,63 +378,39 @@ static void ledc_init(void) {
 
     ledc_set_duty(0);
 }
-
-static void timer_init(void) {
-
-    REG32(SYSTEM_PERIP_CLK_EN0_REG) |= SYSTEM_TIMERGROUP0_CLK_EN;
-    REG32(SYSTEM_PERIP_RST_EN0_REG) &= ~SYSTEM_TIMERGROUP0_RST;
-
-    uint32_t cfg = REG32(TIMG_T0CONFIG_REG);
-    cfg &= ~TIMG_T0_EN;                 // apagar timer
-    cfg &= ~(0xFF << TIMG_T0_DIVIDER_S);
-    cfg |= (TIMG_DIVIDER_US << TIMG_T0_DIVIDER_S);
-    cfg |= TIMG_T0_INCREASE;            // contar hacia arriba
-    cfg &= ~TIMG_T0_AUTORELOAD;
-    cfg &= ~(3 << TIMG_T0_CLK_SRC_S);
-    cfg |= (1 << TIMG_T0_CLK_SRC_S);    // APB_CLK
-    REG32(TIMG_T0CONFIG_REG) = cfg;
-
-    REG32(TIMG_T0LOAD_REG) = 0;         // inicializar contador
-    REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_LOAD_EN; // solo 1 vez para cargar 0
-
-    cfg |= TIMG_T0_EN;                  // encender timer
-    REG32(TIMG_T0CONFIG_REG) = cfg;
-}
-
+    
 static void uart_init(void) {
-    /*// --- 1. Activar Clock y Reset UART0 ---
-    REG32(SYSTEM_PERIP_CLK_EN0_REG) |= SYSTEM_UART_CLK_EN(0);
-    REG32(SYSTEM_PERIP_RST_EN0_REG) |= SYSTEM_UART_RST(0);
-    REG32(SYSTEM_PERIP_RST_EN0_REG) &= ~SYSTEM_UART_RST(0);
+// 1. Activar Clock y Reset UART0
+ REG32(SYSTEM_PERIP_CLK_EN0_REG) |= SYSTEM_UART_CLK_EN(0);
+ REG32(SYSTEM_PERIP_RST_EN0_REG) |= SYSTEM_UART_RST(0);
+ REG32(SYSTEM_PERIP_RST_EN0_REG) &= ~SYSTEM_UART_RST(0);
 
-    // --- 2. Configurar Baud Rate (115200) ---
-    // Divisor = 40MHz / 115200 = 347.22 (usamos 347, que es 0x15B)
-    REG32(UART_CLK_DIV_REG(0)) = (347U << 4); 
+// 2. Configurar Baud Rate (115200)
+// Clock APB es 80 MHz. Divisor = 80,000,000 / 115,200 ≈ 694.44
+// Usamos 694 (parte entera) << 4.
+ REG32(UART_CLK_DIV_REG(0)) = (694U << 4);
 
-    // --- 3. Configurar Pines (GPIO21=TX, GPIO20=RX) ---
-    
-    // 3a. Mapear UART0 TX a GPIO21
-    // Conectar U0TXD_OUT_IDX (0x00) al GPIO21
-    REG32(GPIO_FUNC21_OUT_SEL_CFG_REG) = (U0TXD_OUT_IDX << GPIO_FUNC_OUT_SEL_S);
-    // Habilitar la salida (OE) para GPIO21
-    REG32(GPIO_ENABLE_W1TS_REG) = BIT(UART0_TX_GPIO);
-    // Configurar IO_MUX para usar la Matriz GPIO
-    REG32(IO_MUX_GPIO21_REG) &= ~(IO_MUX_MCU_SEL_MASK); 
-    REG32(IO_MUX_GPIO21_REG) |= (IO_MUX_MCU_SEL_V << 12); 
+// 3. Configuración del formato (8N1) y activación de TX
+// 8 data bits: (3U << 2)
+// 1 stop bit: (1U << 4)
+// TX enable: (1U << 0)
+ uint32_t conf0 = REG32(UART_CONF0_REG(0));
+ conf0 &= ~(0x3U << UART_BIT_NUM_S);// Limpiar data bits
+ conf0 |= (3U << UART_BIT_NUM_S);// Set 8 data bits
+ conf0 &= ~(0x3U << UART_STOP_BIT_NUM_S);// Limpiar stop bits
+ conf0 |= (1U << UART_STOP_BIT_NUM_S);// Set 1 stop bit
+ conf0 &= ~UART_PARITY_EN;// No parity
+ conf0 |= BIT(0);// Habilitar TX
+ REG32(UART_CONF0_REG(0)) = conf0;
 
-    // 3b. Mapear UART0 RX a GPIO20
-    // Conectar U0RXD_IN_IDX (0x00) al GPIO20 (con el bit de habilitación de entrada)
-    REG32(GPIO_FUNC20_IN_SEL_CFG_REG) = (U0RXD_IN_IDX << GPIO_FUNC_OUT_SEL_S) | IO_MUX_FUN_IE;
-    // Deshabilitar la salida (OE) para GPIO20
-    REG32(GPIO_ENABLE_W1TC_REG) = BIT(UART0_RX_GPIO);
-    // Configurar IO_MUX para usar la Matriz GPIO
-    REG32(IO_MUX_GPIO20_REG) &= ~(IO_MUX_MCU_SEL_MASK);
-    REG32(IO_MUX_GPIO20_REG) |= (IO_MUX_MCU_SEL_V << 12); 
-    
-    // Nota: Configuración de palabra (8 bits, sin paridad, 1 bit de parada) es el default y se omite por simplicidad.
-    */
-        // Solo configurar baud rate: USB-Serial usa UART0 internamente
-    REG32(UART_CLK_DIV_REG(0)) = (347U << 4); // 115200 baud
+// 4. Configurar Pines (GPIO21=TX, GPIO20=RX)
+// Mapear UART0 TX (U0TXD_OUT_IDX=0) a GPIO21
+ REG32(GPIO_FUNC21_OUT_SEL_CFG_REG) = (U0TXD_OUT_IDX << GPIO_FUNC_OUT_SEL_S);
+ 
+// Mapear UART0 RX a GPIO20 (con bit de habilitación de entrada) 
+//  REG32(GPIO_FUNC20_IN_SEL_CFG_REG) = (0U << GPIO_FUNC_OUT_SEL_S) | IO_MUX_FUN_IE; 
+
+// Nota: La configuración de IO_MUX y OE se hizo en gpio_init()
 }
 
 static uint16_t adc_sample_once(void) {
@@ -405,7 +434,7 @@ static uint16_t adc_sample_once(void) {
 }
 
 static void short_delay(void) {
-    // Busy-wait simple (no timers configurados)
+    //Busy-wait simple (no timers configurados)
     for (volatile uint32_t i = 0; i < LOOP_DELAY; ++i) {
         __asm__ volatile("nop");
     }
@@ -421,32 +450,20 @@ static void ledc_set_duty(uint32_t duty) {
 }
 
 static void uart_putc(char c) {
-    // Esperar hasta que el FIFO no esté lleno
-    while ((REG32(UART_STATUS_REG(0)) & UART_TXFIFO_CNT_M) >= (UART_FIFO_SIZE << UART_TXFIFO_CNT_S)) {
-        // Busy-wait
-        __asm__ volatile("nop");
-    }
-    // Escribir el carácter al registro FIFO (dirección 0x60000000)
-    REG32(UART_FIFO_REG(0)) = (uint32_t)c;
-}
+//Esperar hasta que el FIFO no esté lleno 
+    while (((REG32(UART_STATUS_REG(0)) & UART_TXFIFO_CNT_M) >> UART_TXFIFO_CNT_S) >= UART_FIFO_SIZE) {
+// Busy-wait 
+    __asm__ volatile("nop"); 
+} // Escribir el carácter al registro FIFO 
+REG32(UART_FIFO_REG(0)) = (uint32_t)c; 
+} 
 
 static void uart_puts(const char *s) {
-    while (*s) {
-        uart_putc(*s++);
-    }
+     while (*s) { 
+        uart_putc(*s++); 
+    } 
 }
 
-static uint64_t timer_get_us(void) {
-    REG32(TIMG_T0_UPDATE_REG) = TIMG_T0_UPDATE; // SOLO ESTO
-    uint32_t low = REG32(TIMG_T0_CNT_LOW_REG);
-    uint32_t high = REG32(TIMG_T0_CNT_HIGH_REG);
-    return ((uint64_t)high << 32) | low;
-}
-
-// ----------------------------------------
-// Medir pulso del HC-SR04 (ECHO)
-// Devuelve "cuántas iteraciones" estuvo en alto
-// ----------------------------------------
 static void tiny_delay(void) {
     for (volatile uint32_t i = 0; i < 200; ++i) {
         __asm__ volatile("nop");
@@ -482,18 +499,12 @@ static uint32_t hcsr04_measure_pulse(uint32_t threshold) {
     return count;
 } 
 
-#define TIMG_T0LO_REG         (*(volatile uint32_t*)(TIMG0_BASE + 0x0004))
-#define TIMG_T0HI_REG         (*(volatile uint32_t*)(TIMG0_BASE + 0x0008))
-#define TIMG_T0UPDATE_REG     (*(volatile uint32_t*)(TIMG0_BASE + 0x000C))
 
-static uint64_t t0_now_us(void)
-{
-    TIMG_T0UPDATE_REG = (1U << 31);
-    while (TIMG_T0UPDATE_REG & (1U << 31)) { }
-    uint32_t lo = TIMG_T0LO_REG;
-    uint32_t hi = TIMG_T0HI_REG;
-    return (((uint64_t)hi) << 32) | lo;
-}
+static uint8_t fade_state = STATE_IDLE;
+static uint8_t last_pulse_state = 255; // imposible
+
+static uint8_t button_state = 0;     // El estado final que vos usás
+static uint8_t last_button = 0;      // Para detectar flanco
 
 int main(void) {
     
@@ -507,65 +518,51 @@ int main(void) {
     adc_init();    
     ledc_init();
     uart_init(); 
-    timer_init();
-    uart_puts("Sistema iniciado. Esperando boton/pulso...\r\n"); // Mensaje de inicio
-
 
     // Bucle principal: fade in/out con PWM
     uint32_t duty = 0;
     int8_t step = 1;
-
+    uint32_t a=1;
     while (1) {
-/*
-        uint64_t a = t0_now_us(); 
-        tiny_delay(); 
-        uint64_t b = t0_now_us(); 
-        if (b != a) { 
-            ledc_set_duty(0); // TIMER ANDA 
-        } else { 
-            uint32_t sample = adc_sample_once();
-            uint32_t pwm_input = (sample > ADC_ZERO_BIAS) ? (sample - ADC_ZERO_BIAS) : 0U;
-            uint32_t pwm_range = 4095U - ADC_ZERO_BIAS;
-            uint32_t duty = (pwm_input * LEDC_DUTY_MAX) / pwm_range;
-            ledc_set_duty(duty); 
-            if ((REG32(GPIO_IN_REG)& BUTTON_MASK) != 0U){ 
-                ledc_set_duty(LEDC_DUTY_MAX); 
-            } 
-        } 
-        short_delay();
-        // 🔥 Leer GPIO2 digital
-        //uint32_t button = (REG32(GPIO_IN_REG)& BUTTON_MASK) != 0U;
-*/
+        uint8_t now = ((REG32(GPIO_IN_REG) & BUTTON_MASK)) ? 1 : 0;
 
-        uint16_t sample = adc_sample_once(); 
-        uint32_t dynamic_offset = ( (uint32_t)sample*2);
-        //uint32_t dynamic_threshold = MIN_PULSE_THRESHOLD + dynamic_offset-ADC_ZERO_BIAS;
-
-        // Medir pulso del HC-SR04
-        uint32_t pulse = hcsr04_measure_pulse(dynamic_offset); //Descomentar esta y comentar la de arriba para usar el sensor
-
-
-         if (pulse == 0) {//>< 
-            uint16_t sample = adc_sample_once(); 
-            uint32_t pwm_input = sample - ADC_THRESHOLD;
-            uint32_t dynamic_duty = (LEDC_DUTY_MAX*pwm_input) /ADC_MAX_RANGE;
-            ledc_set_duty(LEDC_DUTY_MAX);//dynamic_duty);
-
-            // 🔥 NUEVO: Enviar mensaje a la consola
-            // \r\n (Carriage Return + New Line) es importante para saltos de línea
-            uart_puts("!ATENCION: Deteccion activada. LED detenido.\r\n");
-
-        } else{
-            ledc_set_duty(0);
-            /*ledc_set_duty((pulse*duty)/100);
-            duty += step;
-
-            if (duty == LEDC_DUTY_MAX || duty == 0) {
-                step = -step; // Cambio de dirección
-            }*/
+        if (now == 1 && last_button == 0) {
+            button_state ^= 1;   
         }
-        
+
+        last_button = now;
+        if(button_state){
+            REG32(GPIO_OUT_W1TC_REG) = GPIO8_MASK;
+            REG32(GPIO_OUT_W1TC_REG) = GPIO6_MASK;
+            ledc_set_duty(0);
+            a=1;
+            uart_putc(a);
+            //uart_putc('c');
+            //uart_puts("Esta apagado.\r\n");
+        }else{           
+            uint16_t sample = adc_sample_once(); 
+            uint32_t dynamic_offset = ( (uint32_t)sample*2);
+            uint32_t pulse = hcsr04_measure_pulse(dynamic_offset); 
+            
+            if (pulse == 0) {//>< 
+                uint32_t dynamic_duty = ((sample- ADC_ZERO_BIAS)*LEDC_DUTY_MAX)/ADC_MAX_RANGE;
+                ledc_set_duty(dynamic_duty);
+                uart_putc(2);
+                REG32(GPIO_OUT_W1TS_REG) = GPIO6_MASK;
+                REG32(GPIO_OUT_W1TC_REG) = GPIO8_MASK;
+                a=2;
+                uart_putc(a);
+                uart_putc('a');
+            } else{
+                ledc_set_duty(0);
+                REG32(GPIO_OUT_W1TC_REG) = GPIO6_MASK;
+                REG32(GPIO_OUT_W1TS_REG) = GPIO8_MASK;
+                a=0;
+                uart_putc(a);
+                uart_putc('b');
+            }
+
+        }
         short_delay();
-        
     }
 }
