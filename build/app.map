@@ -27,7 +27,6 @@ LOAD build/main.o
                 0x420000a6                main
  *(.gnu.linkonce.t.*)
                 0x420004e0                        . = ALIGN (0x4)
- *fill*         0x420004e0        0x0 
                 0x420004e0                        _etext = .
 
 .rodata         0x3c000000       0x18 load address 0x420004e0
