@@ -361,22 +361,6 @@ static void uart_init(void) {
  REG32(SYSTEM_PERIP_CLK_EN0_REG) |= SYSTEM_UART_CLK_EN(0);
  REG32(SYSTEM_PERIP_RST_EN0_REG) |= SYSTEM_UART_RST(0);
  REG32(SYSTEM_PERIP_RST_EN0_REG) &= ~SYSTEM_UART_RST(0);
-
-// Configurar Baud Rate (115200)
-// Clock APB es 80 MHz. Divisor = 80,000,000 / 115,200 ≈ 694.44
-// Usamos 694 (parte entera) << 4.
- REG32(UART_CLK_DIV_REG(0)) = (694U << 4);
-// 8 data bits: (3U << 2)
-// 1 stop bit: (1U << 4)
-// TX enable: (1U << 0)
- uint32_t conf0 = REG32(UART_CONF0_REG(0));
- conf0 &= ~(0x3U << UART_BIT_NUM_S);// Limpiar data bits
- conf0 |= (3U << UART_BIT_NUM_S);// Set 8 data bits
- conf0 &= ~(0x3U << UART_STOP_BIT_NUM_S);// Limpiar stop bits
- conf0 |= (1U << UART_STOP_BIT_NUM_S);// Set 1 stop bit
- conf0 &= ~UART_PARITY_EN;// No parity
- conf0 |= BIT(0);// Habilitar TX
- REG32(UART_CONF0_REG(0)) = conf0;
 // Mapear UART0 TX (U0TXD_OUT_IDX=0) a GPIO21
  REG32(GPIO_FUNC21_OUT_SEL_CFG_REG) = (U0TXD_OUT_IDX << GPIO_FUNC_OUT_SEL_S);
 }
@@ -402,7 +386,6 @@ static uint16_t adc_sample_once(void) {
 }
 
 static void short_delay(void) {
-    //Busy-wait simple (no timers configurados)
     for (volatile uint32_t i = 0; i < LOOP_DELAY; ++i) {
         __asm__ volatile("nop");
     }
@@ -419,16 +402,17 @@ static void ledc_set_duty(uint32_t duty) {
 
 static void uart_putc(char c) {
 //Esperar hasta que el FIFO no esté lleno 
-    while (((REG32(UART_STATUS_REG(0)) & UART_TXFIFO_CNT_M) >> UART_TXFIFO_CNT_S) >= UART_FIFO_SIZE) {
+    while (((REG32(UART_STATUS_REG(0)) & UART_TXFIFO_CNT_M) >> UART_TXFIFO_CNT_S) >= 129) {
         // Busy-wait 
-        __asm__ volatile("nop"); 
+        short_delay() ;
     } // Escribir el carácter al registro FIFO 
-    REG32(UART_FIFO_REG(0)) = (uint32_t)c; 
+    REG32(UART_FIFO_REG(0)) = c; 
 } 
 
 static void uart_puts(const char *s) {
      while (*s) { 
-        uart_putc(*s++); 
+        uart_putc(*s);
+        s++;
     } 
 }
 
@@ -446,7 +430,7 @@ static uint32_t hcsr04_measure_pulse(uint32_t threshold) {
     tiny_delay();
     // Pulso de 10µs aprox en TRIG
     REG32(GPIO_OUT_W1TS_REG) = TRIG_MASK;
-    for (volatile uint32_t i = 0; i < 2000; ++i) { // ajuste fino si querés
+    for (volatile uint32_t i = 0; i < 200; ++i) { // ajuste fino si querés
         __asm__ volatile("nop");
     }
     REG32(GPIO_OUT_W1TC_REG) = TRIG_MASK;
@@ -469,7 +453,6 @@ static uint32_t hcsr04_measure_pulse(uint32_t threshold) {
 
 
 int main(void) {
-    
     static uint8_t fade_state = STATE_IDLE;
     static uint8_t last_pulse_state = 255; // imposible
 
@@ -488,7 +471,12 @@ int main(void) {
     while (1) {
         uint8_t now = ((REG32(GPIO_IN_REG) & BUTTON_MASK)) ? 1 : 0;
         if (now == 1 && last_button == 0) {
-            button_state ^= 1;   
+            button_state ^= 1;
+            if(button_state){
+                uart_puts("ap");
+            }else{
+                //uart_puts("");
+            }
         }
         last_button = now;
         if(button_state){
@@ -515,7 +503,6 @@ int main(void) {
                 ledc_set_duty(0);
                 REG32(GPIO_OUT_W1TC_REG) = GPIO6_MASK;
                 REG32(GPIO_OUT_W1TS_REG) = GPIO8_MASK;
-                uart_putc('a');
             }
         }
         short_delay();

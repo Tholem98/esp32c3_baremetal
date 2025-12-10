@@ -94,9 +94,11 @@ Todos los pines se configuran a mano:
 ## Compilación y Flash
 
 ### Requisitos
-- Toolchain ESP32-C3: `riscv32-esp-elf-gcc`
-- `esptool.py`
+- Toolchain ESP32-C3: 
+- `startup.s`
 - `make`
+- `flash.sh`
+- `build.sh`
 
 ### Compilar
 ```bash
